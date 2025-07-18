@@ -317,3 +317,110 @@
     )
   )
 )
+
+;; ATTENDANCE TRACKING FUNCTIONS
+
+(define-public (check-in (event-id uint))
+  (let ((event (unwrap! (get-event event-id) ERR-EVENT-NOT-FOUND)))
+    (begin
+      (asserts! (get is-active event) ERR-EVENT-ENDED)
+      (asserts! (>= stacks-block-height (get start-height event))
+        ERR-EVENT-NOT-ENDED
+      )
+      (asserts! (< stacks-block-height (get end-height event)) ERR-EVENT-ENDED)
+      (asserts! (is-none (get-attendance-record event-id tx-sender))
+        ERR-ALREADY-REGISTERED
+      )
+      (map-set event-attendance {
+        event-id: event-id,
+        attendee: tx-sender,
+      } {
+        check-in-height: stacks-block-height,
+        check-out-height: u0,
+        duration: u0,
+        verified: false,
+      })
+      (ok true)
+    )
+  )
+)
+
+(define-public (check-out (event-id uint))
+  (let (
+      (attendance (unwrap! (get-attendance-record event-id tx-sender) ERR-EVENT-NOT-FOUND))
+      (event (unwrap! (get-event event-id) ERR-EVENT-NOT-FOUND))
+    )
+    (begin
+      (asserts! (get is-active event) ERR-EVENT-ENDED)
+      (asserts! (> stacks-block-height (get check-in-height attendance))
+        ERR-INVALID-DURATION
+      )
+      (let ((duration (- stacks-block-height (get check-in-height attendance))))
+        (map-set event-attendance {
+          event-id: event-id,
+          attendee: tx-sender,
+        } {
+          check-in-height: (get check-in-height attendance),
+          check-out-height: stacks-block-height,
+          duration: duration,
+          verified: false,
+        })
+        (ok duration)
+      )
+    )
+  )
+)
+
+;; VERIFICATION SYSTEM
+
+(define-public (verify-attendance
+    (event-id uint)
+    (attendee principal)
+  )
+  (let (
+      (attendance (unwrap! (get-attendance-record event-id attendee) ERR-EVENT-NOT-FOUND))
+      (event (unwrap! (get-event event-id) ERR-EVENT-NOT-FOUND))
+    )
+    (begin
+      ;; Verify the caller is authorized
+      (asserts! (is-verifier tx-sender) ERR-NOT-AUTHORIZED)
+      ;; Check if event is still active
+      (asserts! (get is-active event) ERR-EVENT-NOT-ACTIVE)
+      ;; Verify attendee is a valid principal
+      (asserts! (not (is-eq attendee tx-sender)) ERR-INVALID-ATTENDEE)
+      ;; Check if already verified
+      (asserts! (not (get verified attendance)) ERR-ALREADY-VERIFIED)
+      ;; Verify check-in record exists and is valid
+      (asserts! (> (get check-in-height attendance) u0) ERR-NO-CHECKIN-RECORD)
+      ;; Update attendance record
+      (map-set event-attendance {
+        event-id: event-id,
+        attendee: attendee,
+      }
+        (merge attendance { verified: true })
+      )
+      ;; Store verification details separately
+      (map-set verification-details {
+        event-id: event-id,
+        attendee: attendee,
+      } {
+        verified-by: tx-sender,
+        verified-at: stacks-block-height,
+      })
+      (ok true)
+    )
+  )
+)
+
+;; REWARD DISTRIBUTION SYSTEM
+
+(define-public (claim-reward (event-id uint))
+  (let (
+      (event (unwrap! (get-event event-id) ERR-EVENT-NOT-FOUND))
+      (attendance (unwrap! (get-attendance-record event-id tx-sender) ERR-EVENT-NOT-FOUND))
+    )
+    (begin
+      (asserts! (> stacks-block-height (get end-height event))
+        ERR-EVENT-NOT-ENDED
+      )
+      (asserts! (get verified attendance) ERR-NOT-AUTHORIZED)
