@@ -424,3 +424,110 @@
         ERR-EVENT-NOT-ENDED
       )
       (asserts! (get verified attendance) ERR-NOT-AUTHORIZED)
+      (asserts! (is-none (get-reward-claim event-id tx-sender))
+        ERR-ALREADY-CLAIMED
+      )
+      ;; Calculate reward based on attendance duration
+      (let (
+          (base-amount (get base-reward event))
+          (bonus-amount (if (>= (get duration attendance) (get min-attendance-duration event))
+            (get bonus-reward event)
+            u0
+          ))
+          (total-reward (+ base-amount bonus-amount))
+        )
+        (asserts! (<= total-reward (var-get treasury-balance))
+          ERR-INSUFFICIENT-FUNDS
+        )
+        (try! (as-contract (stx-transfer? total-reward tx-sender tx-sender)))
+        (var-set treasury-balance (- (var-get treasury-balance) total-reward))
+        (map-set rewards-claimed {
+          event-id: event-id,
+          attendee: tx-sender,
+        } {
+          amount: total-reward,
+          claimed-at: stacks-block-height,
+          reward-tier: (if (> bonus-amount u0)
+            u2
+            u1
+          ),
+        })
+        (ok total-reward)
+      )
+    )
+  )
+)
+
+;; ADMINISTRATIVE FUNCTIONS
+
+(define-public (add-verifier (address principal))
+  (begin
+    ;; Check if caller is contract owner
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    ;; Check if address is valid (not burn address)
+    (asserts! (not (is-eq address BURN-ADDRESS)) ERR-INVALID-ADDRESS)
+    ;; Check if address is not already a verifier
+    (asserts! (not (default-to false (map-get? verifiers address)))
+      ERR-ALREADY-VERIFIER
+    )
+    ;; Add verifier
+    (map-set verifiers address true)
+    (ok true)
+  )
+)
+
+(define-public (remove-verifier (address principal))
+  (begin
+    ;; Check if caller is contract owner
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    ;; Check if address is valid
+    (asserts! (not (is-eq address BURN-ADDRESS)) ERR-INVALID-ADDRESS)
+    ;; Check if address is currently a verifier
+    (asserts! (default-to false (map-get? verifiers address)) ERR-NOT-VERIFIER)
+    ;; Remove verifier
+    (map-set verifiers address false)
+    (ok true)
+  )
+)
+
+(define-public (deactivate-event (event-id uint))
+  (let ((event (unwrap! (get-event event-id) ERR-EVENT-NOT-FOUND)))
+    (begin
+      ;; Check if caller is contract owner
+      (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+      ;; Check if event exists and is currently active
+      (asserts! (get is-active event) ERR-EVENT-ALREADY-INACTIVE)
+      ;; Deactivate event
+      (map-set events event-id (merge event { is-active: false }))
+      (ok true)
+    )
+  )
+)
+
+;; TREASURY MANAGEMENT
+
+(define-public (deposit-funds (amount uint))
+  (begin
+    ;; Check if amount is valid (greater than 0)
+    (asserts! (> amount u0) ERR-INVALID-AMOUNT)
+    ;; Check if sender has sufficient balance
+    (asserts! (<= amount (stx-get-balance tx-sender)) ERR-INVALID-AMOUNT)
+    ;; Perform transfer
+    (let ((transfer-result (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))))
+      (begin
+        (var-set treasury-balance (+ (var-get treasury-balance) amount))
+        (ok true)
+      )
+    )
+  )
+)
+
+(define-public (withdraw-funds (amount uint))
+  (begin
+    (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+    (asserts! (<= amount (var-get treasury-balance)) ERR-INSUFFICIENT-FUNDS)
+    (try! (as-contract (stx-transfer? amount tx-sender tx-sender)))
+    (var-set treasury-balance (- (var-get treasury-balance) amount))
+    (ok true)
+  )
+)
