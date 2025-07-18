@@ -208,3 +208,112 @@
       (attendance (get-attendance-record event-id attendee))
       (details (get-verification-details event-id attendee))
     )
+    {
+      verified: (match attendance
+        attendance-data (get verified attendance-data)
+        false
+      ),
+      details: details,
+    }
+  )
+)
+
+;; UTILITY FUNCTIONS
+
+(define-private (is-valid-ascii (s (string-ascii 200)))
+  (let ((len (len s)))
+    (and
+      ;; Check if length is greater than 0
+      (> len u0)
+      ;; Ensure first character isn't whitespace
+      (not (is-eq (unwrap-panic (element-at s u0)) " "))
+      ;; Ensure last character isn't whitespace
+      (not (is-eq (unwrap-panic (element-at s (- len u1))) " "))
+    )
+  )
+)
+
+;; EVENT MANAGEMENT FUNCTIONS
+
+(define-public (create-event
+    (name (string-ascii 50))
+    (description (string-ascii 200))
+    (start-height uint)
+    (duration uint)
+    (base-reward uint)
+    (bonus-reward uint)
+    (min-attendance uint)
+  )
+  (let (
+      (event-id (+ (var-get event-counter) u1))
+      (end-height (+ start-height duration))
+      (current-height stacks-block-height)
+      (name-length (len name))
+      (desc-length (len description))
+    )
+    (begin
+      ;; Authorization check
+      (asserts! (is-eq tx-sender (var-get contract-owner)) ERR-NOT-AUTHORIZED)
+      ;; Name validation
+      (asserts!
+        (and
+          (>= name-length MIN-NAME-LENGTH)
+          (<= name-length MAX-NAME-LENGTH)
+          (is-valid-ascii name)
+        )
+        ERR-INVALID-NAME
+      )
+      ;; Description validation
+      (asserts!
+        (and
+          (>= desc-length MIN-DESC-LENGTH)
+          (<= desc-length MAX-DESC-LENGTH)
+          (is-valid-ascii description)
+        )
+        ERR-INVALID-DESCRIPTION
+      )
+      ;; Duration validation
+      (asserts!
+        (and
+          (>= duration MIN-DURATION)
+          (<= duration MAX-DURATION)
+        )
+        ERR-INVALID-DURATION
+      )
+      ;; Start height validation - must be in the future
+      (asserts! (> start-height current-height) ERR-INVALID-START-HEIGHT)
+      ;; Reward amount validation
+      (asserts!
+        (and
+          (<= base-reward MAX-REWARD)
+          (<= bonus-reward MAX-REWARD)
+          (> base-reward u0)
+        )
+        ERR-INVALID-REWARD
+      )
+      ;; Minimum attendance validation
+      (asserts!
+        (and
+          (> min-attendance u0)
+          (<= min-attendance duration)
+        )
+        ERR-INVALID-MIN-ATTENDANCE
+      )
+      ;; Create the event with validated data
+      (map-set events event-id {
+        name: name,
+        description: description,
+        start-height: start-height,
+        end-height: end-height,
+        base-reward: base-reward,
+        bonus-reward: bonus-reward,
+        min-attendance-duration: min-attendance,
+        organizer: tx-sender,
+        is-active: true,
+      })
+      ;; Update event counter
+      (var-set event-counter event-id)
+      (ok event-id)
+    )
+  )
+)
