@@ -102,3 +102,109 @@
     verified: bool,
   }
 )
+
+;; Verification Audit Trail
+(define-map verification-details
+  {
+    event-id: uint,
+    attendee: principal,
+  }
+  {
+    verified-by: principal,
+    verified-at: uint,
+  }
+)
+
+;; Reward Distribution Records
+(define-map rewards-claimed
+  {
+    event-id: uint,
+    attendee: principal,
+  }
+  {
+    amount: uint,
+    claimed-at: uint,
+    reward-tier: uint,
+  }
+)
+
+;; Verification Authority Registry
+(define-map verifiers
+  principal
+  bool
+)
+
+;; READ-ONLY FUNCTIONS
+
+(define-read-only (get-owner)
+  (var-get contract-owner)
+)
+
+(define-read-only (get-event (event-id uint))
+  (map-get? events event-id)
+)
+
+(define-read-only (get-attendance-record
+    (event-id uint)
+    (attendee principal)
+  )
+  (map-get? event-attendance {
+    event-id: event-id,
+    attendee: attendee,
+  })
+)
+
+(define-read-only (get-reward-claim
+    (event-id uint)
+    (attendee principal)
+  )
+  (map-get? rewards-claimed {
+    event-id: event-id,
+    attendee: attendee,
+  })
+)
+
+(define-read-only (is-verifier (address principal))
+  (default-to false (map-get? verifiers address))
+)
+
+(define-read-only (event-exists (event-id uint))
+  (is-some (map-get? events event-id))
+)
+
+(define-read-only (can-verify-attendance
+    (event-id uint)
+    (attendee principal)
+  )
+  (let (
+      (attendance (get-attendance-record event-id attendee))
+      (event (get-event event-id))
+    )
+    (and
+      (is-some attendance)
+      (is-some event)
+      (get is-active (unwrap! event false))
+      (> (get check-in-height (unwrap! attendance false)) u0)
+      (not (get verified (unwrap! attendance false)))
+    )
+  )
+)
+
+(define-read-only (get-verification-details
+    (event-id uint)
+    (attendee principal)
+  )
+  (map-get? verification-details {
+    event-id: event-id,
+    attendee: attendee,
+  })
+)
+
+(define-read-only (get-full-verification-status
+    (event-id uint)
+    (attendee principal)
+  )
+  (let (
+      (attendance (get-attendance-record event-id attendee))
+      (details (get-verification-details event-id attendee))
+    )
